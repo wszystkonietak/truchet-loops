@@ -1,63 +1,52 @@
-# Path Generator on finite truchet tilings
+# Truchet Tiling Path Generator
 
-A real-time C++23 and OpenGL project for generating Truchet paths across various grid topologies. It creates both non-crossing tracks and overlapping ribbons on Hexagonal ($6^3$), Octagonal–Square ($4.8^2$), and Dodecagonal–Hexagonal–Square ($4.6.12$) grids. Using DSU cycle merging, it can generate multiple randomized circuits or connect everything into a single continuous loop, rendered in real time with fragment shaders.
+A real-time procedural Truchet path generator and renderer across finite 2D periodic tilings: Hexagonal (6³), Octagonal–Square (4.8²), and Dodecagonal–Hexagonal–Square (4.6.12).
+
+The CPU connects edge terminals within each tile and merges disjoint loops into a single continuous path using Disjoint-Set Union (DSU). The scene renders as a full-screen quad where the fragment shader maps pixel coordinates to tile IDs and calculates arc distances to color each pixel.
 
 ## Gallery
 
 | Topology | Non-Overlapping · Single Loop | Non-Overlapping · Multi-Loop | Overlapping · Single Loop | Overlapping · Multi-Loop |
 | :--- | :---: | :---: | :---: | :---: |
-| **Dodecagonal**<br>($4.6.12$) | <img src="images/dodecagon_single_non_overlap.png" width="100%" /> | <img src="images/dodecagon_multi_non_overlap.png" width="100%" /> | <img src="images/dodecagon_single_overlap.png" width="100%" /> | <img src="images/dodecagon_multi_overlap.png" width="100%" /> |
-| **Octagonal**<br>($4.8^2$) | <img src="images/octagon_single_non_overlap.png" width="100%" /> | <img src="images/octagon_multi_non_overlap.png" width="100%" /> | <img src="images/octagon_single_overlap.png" width="100%" /> | <img src="images/octagon_multi_overlap.png" width="100%" /> |
-| **Hexagonal**<br>($6^3$) | <img src="images/hexagon_single_non_overlap.png" width="100%" /> | <img src="images/hexagon_multi_non_overlap.png" width="100%" /> | <img src="images/hexagon_single_overlap.png" width="100%" /> | <img src="images/hexagon_multi_overlap.png" width="100%" /> |
+| **Dodecagonal**<br>(4.6.12) | <img src="images/dodecagon_single_non_overlap.png" width="100%" /> | <img src="images/dodecagon_multi_non_overlap.png" width="100%" /> | <img src="images/dodecagon_single_overlap.png" width="100%" /> | <img src="images/dodecagon_multi_overlap.png" width="100%" /> |
+| **Octagonal**<br>(4.8²) | <img src="images/octagon_single_non_overlap.png" width="100%" /> | <img src="images/octagon_multi_non_overlap.png" width="100%" /> | <img src="images/octagon_single_overlap.png" width="100%" /> | <img src="images/octagon_multi_overlap.png" width="100%" /> |
+| **Hexagonal**<br>(6³) | <img src="images/hexagon_single_non_overlap.png" width="100%" /> | <img src="images/hexagon_multi_non_overlap.png" width="100%" /> | <img src="images/hexagon_single_overlap.png" width="100%" /> | <img src="images/hexagon_multi_overlap.png" width="100%" /> |
 
-## How It Works
+## Implementation Details
 
-### 1. Flat Storage via `jagged_span`
-Tilings combine polygons with varying edge counts, such as 12-gons, squares, and hexagons. Instead of nested vectors or pointer indirection, all topology and routing states are stored in contiguous 1D buffers. The custom `jagged_span` view uses layout policies to map tile IDs directly to `{offset, size}`, enabling zero-allocation 2D indexing and subspan access.
+### Flat Storage & Layout Policies
+Grids contain tiles with different numbers of edges.
 
-### 2. Path Generation & Loop Merging with DSU
-Path generation and connecting paths into a single continuous loop rely on a Disjoint-Set Union (DSU) structure tracking edge connectivity:
-* **Terminal Pairing**: Each edge of a tile serves as a connection terminal. Terminals inside each tile are connected in pairs either through non-crossing recursive subdivision or random shuffling for overlapping ribbons. Each connection registers the shared global edges into DSU sets using `UnionSets`.
-* **Single-Loop Merging (`ConnectPaths`)**: When single-loop mode is enabled, the generator inspects adjacent edge terminals on each tile. If two neighboring paths belong to disjoint cycles (`FindSet(edge_a) != FindSet(edge_b)`), their internal connection partners are swapped to splice the cycles together, unifying them into one continuous loop.
+All terminal states are stored in a single 1D buffer. A `jagged_span` view provides 2D indexing using a `LayoutPolicy` that calculates `{offset, size}` at runtime without storing offset arrays.
 
-### 3. Bit-Packed GPU Uniform Buffers (UBO)
-Routing data is compressed on the CPU and streamed to a single `std140` uniform buffer:
-* **8 Bits per Terminal**: 4 bits for the target terminal index, 1 bit to designate which side of the arc is filled, and 3 bits for loop color ID.
-* **Shader Unpacking**: Four terminals are packed into each `uint32_t` (aligned into `uvec4` blocks), allowing the fragment shader to unpack routes per pixel and evaluate circular arc distances on the GPU in real time.
+### Path Generation & Loop Merging
+Each tile edge acts as a terminal:
+* **Terminal Pairing**: For non-overlapping paths, terminals connect only to neighboring edges so paths do not cross. For overlapping paths, terminals connect to random edges across the tile.
+* **Loop Merging**: Disjoint-Set Union (DSU) tracks connected paths. To create a single continuous loop, adjacent terminals from different sets are swapped to merge their loops together.
 
-## Prerequisites & Dependencies
+### GPU Rendering
+Routing data is packed on the CPU and sent to a `std140` Uniform Buffer Object (UBO):
+* Each terminal packs its partner index, arc side bit, and loop color ID. Four terminals fit into one `uint32_t`.
+* The fragment shader maps UV coordinates to tile IDs and unpacks the connections.
+* Arcs and lines are rendered per pixel using an analytical distance function (`ArcDistanceUV`).
 
-* **C++23 Compiler**: Clang 16+, GCC 13+, or MSVC 2022+
-* **CMake**: Version 3.16 or newer
-* **OpenGL**: Version 4.1 Core Profile
-* **GLFW3**: Windowing and input management
-* **GLM**: OpenGL Mathematics library
+## Controls
 
-## Building & Running
+| Key | Action |
+| :--- | :--- |
+| `1`, `2`, `3` | Switch grid topology (1: Dodecagonal, 2: Octagonal, 3: Hexagonal) |
+| `O` | Toggle overlapping paths |
+| `L` | Toggle single continuous loop mode |
+| `Arrow Keys` | Adjust grid width and height |
 
-1. **Build**:
-   ```bash
-   mkdir build && cd build
-   cmake ..
-   cmake --build .
-   ```
+## Dependencies
 
-2. **Run**:
-   The executable accepts an optional path to the directory containing `shader.vert` and `shader.frag` (defaults to `./`):
-   ```bash
-   ./truchet_grid ../
-   ```
-
-3. **Controls**:
-
-   | Key | Action |
-   | :--- | :--- |
-   | `1`, `2`, `3` | Switch grid topology (1: Dodecagonal, 2: Octagonal, 3: Hexagonal) |
-   | `O` | Toggle overlapping ribbons |
-   | `L` | Toggle single continuous loop mode |
-   | `Arrow Keys` | Adjust grid width and height |
+* C++23 compiler (GCC 13+, Clang 16+, MSVC 2022+)
+* CMake (>= 3.16)
+* OpenGL 4.1 Core Profile
+* GLFW3, GLM
 
 ## References
 
-* [Hexagonal Truchet by Shane (ShaderToy)](https://www.shadertoy.com/view/WsyXWR)
-* [Dodecagonal Truchet by Shane (ShaderToy)](https://www.shadertoy.com/view/wdBSRm)
+1. **[Diamond Octagon Truchet Pattern](https://www.shadertoy.com/view/wdBSRm)** by Shane.
+2. **[4.6.12 Truchet Weave](https://www.shadertoy.com/view/WsyXWR)** by Shane.
